@@ -55,7 +55,11 @@ config.securityGroups.each {
 	}
 }
 
+task createAllSubnets(dependsOn: project.tasks.findAll { it.name.startsWith('createSubnet')}) {	
+}
 
+task createAllSecurityGroups(dependsOn: project.tasks.findAll { it.name.startsWith('createSecurityGroup')}) {
+}
 
 // ======================== Class library ==========================
 
@@ -184,6 +188,20 @@ class AwsTask extends CommandLineTask
 	}
 	
 	def addTags(String id, Map tags)
+	{
+		try 
+		{
+			doAddTags(id, tags)
+		} 
+		catch(Exception)
+		{
+			// Sometimes the new item isn't "ready" yet
+			sleep(500)
+			doAddTags(id, tags)
+		}
+	}
+	
+	private def doAddTags(String id, Map tags)
 	{
 		def taglist = tags.collect { "Key=$it.key,Value=$it.value" }.join(' ')
 		def result = runCommand("aws ec2 create-tags --resources $id --tags $taglist")
