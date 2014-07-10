@@ -9,8 +9,6 @@ logger.quiet "Loading configuration for environment [$env]."
 
 task findVpc {
 	doLast {
-		def vpcId = getVpcId()
-		logger.quiet "VPC Id is $vpcId"
 		project.ext.vpcId = vpcId
 	}
 }
@@ -30,7 +28,11 @@ task addTestSecurityIngress(type: AuthorizeSecurityGroupIngress) {
 	cidr = "10.8.0.0/16"
 }
 
-class AuthorizeSecurityGroupIngress extends DefaultTask {
+
+
+// ======================== Class library ==========================
+
+class AuthorizeSecurityGroupIngress extends AwsTask {
 	@Input
 	String groupName
 	
@@ -46,7 +48,7 @@ class AuthorizeSecurityGroupIngress extends DefaultTask {
 	AuthorizeSecurityGroupIngress()
 	{
 		onlyIf {
-			def group = project.findSecurityGroupByName(groupName)
+			def group = findSecurityGroupByName(groupName)
 			if(!group) return true 
 			def permissions = group.IpPermissions.findAll {it.ToPort == port }.findAll {it.IpProtocol == protocol }
 			if(!permissions) return true
@@ -60,15 +62,61 @@ class AuthorizeSecurityGroupIngress extends DefaultTask {
 	
 	@TaskAction
 	void runTask() {
-		def result = project.runCommand("aws ec2 authorize-security-group-ingress --group-name $groupName --protocol $protocol --port $port --cidr $cidr")
+		def result = runCommand("aws ec2 authorize-security-group-ingress --group-name $groupName --protocol $protocol --port $port --cidr $cidr")
 	}
 }
 
 class CommandLineTask extends DefaultTask {
+	def runCommand(command) {
+		StringBuilder errorCatcher = new StringBuilder()
+		def process = command.execute()
+		process.consumeProcessErrorStream(errorCatcher)
+		process.waitFor()
+		
+		def result = process.getIn().text
+	
+		if(process.exitValue() != 0) {
+			throw new GradleException(errorCatcher.toString())
+		}
+		
+		def json = new JsonSlurper().parseText(result)
+		return json
+	}
+}
+
+class AwsTask extends CommandLineTask 
+{
+	def findSecurityGroupByName(String name) 
+	{
+		try
+		{
+			def json = runCommand("aws ec2 describe-security-groups --group-names $name")
+			return json.SecurityGroups[0]
+		}
+		catch(Exception)
+		{
+			// AWS returns non-zero exit code if it can't find any groups matching those names
+			return null
+		}
+	}
+	
+	//  http://docs.aws.amazon.com/cli/latest/reference/ec2/create-security-group.html
+	def createSecurityGroup(String groupName, String description, String vpcId) 
+	{
+		def json = runCommand("aws ec2 create-security-group --group-name $groupName --description \"${description}\" --vpc-id $vpcId")
+		return json.GroupId
+	}
+
+	def findVpcId() 
+	{
+		def json = runCommand('aws ec2 describe-vpcs')
+		def vpcId = json.Vpcs[0].VpcId
+		return vpcId
+	}
 	
 }
 
-class CreateSecurityGroup extends DefaultTask {
+class CreateSecurityGroup extends AwsTask {
 	@Input
 	String groupName
 	
@@ -82,7 +130,7 @@ class CreateSecurityGroup extends DefaultTask {
 	
 	CreateSecurityGroup()
 	{
-		onlyIf { !project.findSecurityGroupByName(groupName) }
+		onlyIf { !findSecurityGroupByName(groupName) }
 	}
 
 	@TaskAction
@@ -90,49 +138,20 @@ class CreateSecurityGroup extends DefaultTask {
 		vpcId = project.vpcId
 		groupId = createSecurityGroup(groupName, description, vpcId)
 	}
-
-	//  http://docs.aws.amazon.com/cli/latest/reference/ec2/create-security-group.html
-	def createSecurityGroup(String groupName, String description, String vpcId) {
-		def json = project.runCommand("aws ec2 create-security-group --group-name $groupName --description \"${description}\" --vpc-id $vpcId")
-		return json.GroupId
-	}
-
 }
 
-def getVpcId() {
-	def json = runCommand('aws ec2 describe-vpcs')
-	def vpcId = json.Vpcs[0].VpcId
-	return vpcId
-}
-
-def findSecurityGroupByName(String name) {
-	try 
-	{
-		def json = runCommand("aws ec2 describe-security-groups --group-names $name")
-		return json.SecurityGroups[0]
-	}
-	catch(Exception)
-	{
-		// AWS returns non-zero exit code if it can't find any groups matching those names
-		return null
-	}
-}
-
-def runCommand(command) {
-	StringBuilder errorCatcher = new StringBuilder()
-	def process = command.execute()
-	process.consumeProcessErrorStream(errorCatcher)
-	process.waitFor()
+class FindVpcTask extends AwsTask {
+	String vpcId
 	
-	def result = process.getIn().text
-
-	if(process.exitValue() != 0) {
-		throw new GradleException(errorCatcher.toString())
+	@TaskAction
+	def runTask()
+	{
+		vpcId = findVpcId()
+		logger.quiet "VPC Id is $vpcId"
 	}
-	
-	def json = new JsonSlurper().parseText(result)
-	return json
 }
+
+
 
 /*
 Create a security group
