@@ -47,15 +47,14 @@ class AuthorizeSecurityGroupIngress extends AwsTask {
 	
 	AuthorizeSecurityGroupIngress()
 	{
+		// AWS will bonk if you try to apply the same rule twice...sigh
 		onlyIf {
 			def group = findSecurityGroupByName(groupName)
 			if(!group) return true 
 			def permissions = group.IpPermissions.findAll {it.ToPort == port }.findAll {it.IpProtocol == protocol }
 			if(!permissions) return true
-			println "Permissions: $permissions"
-			def match = permissions.findAll { it.IpRanges.CidrIp == cidr }
+			def match = permissions.collect { it.IpRanges.findAll { it.CidrIp == cidr }}
 			if(!match) return true
-			println match
 			return false
 		}
 	}
