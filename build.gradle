@@ -118,6 +118,21 @@ def findSecurityGroupByName(String name) {
 	}
 }
 
+def runCommand(command) {
+	StringBuilder errorCatcher = new StringBuilder()
+	def process = command.execute()
+	process.consumeProcessErrorStream(errorCatcher)
+	process.waitFor()
+	
+	def result = process.getIn().text
+
+	if(process.exitValue() != 0) {
+		throw new GradleException(errorCatcher.toString())
+	}
+	
+	def json = new JsonSlurper().parseText(result)
+	return json
+}
 
 /*
 Create a security group
