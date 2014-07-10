@@ -1,0 +1,126 @@
+import groovy.json.*
+
+def env = project.hasProperty('env') ? project.getProperty('env') : 'dev'
+ext.env = env
+logger.quiet "Loading configuration for environment [$env]."
+//def configFile = file("$rootDir/gradle/config/buildConfig.groovy")
+//def parsedConfig = new ConfigSlurper(env).parse(configFile.toURL())
+//ext.config = parsedConfig
+
+task findVpc {
+	doLast {
+		def vpcId = getVpcId()
+		logger.quiet "VPC Id is $vpcId"
+		project.ext.vpcId = vpcId
+	}
+}
+
+task createTestSecurityGroup(type: CreateSecurityGroup, dependsOn: findVpc) {
+	groupName = "test2"
+	description = "testing API"
+	doLast {
+		logger.quiet groupId
+	}
+}
+
+task addTestSecurityIngress(type: AuthorizeSecurityGroupIngress) {
+	groupName = 'test2'
+	protocol = 'tcp'
+	port = 8765
+	cidr = "10.8.0.0/16"
+}
+
+class AuthorizeSecurityGroupIngress extends DefaultTask {
+	@Input
+	String groupName
+	
+	@Input
+	String protocol
+	
+	@Input 
+	Integer port
+	
+	@Input 
+	String cidr
+	
+	AuthorizeSecurityGroupIngress()
+	{
+		onlyIf {
+			def group = project.findSecurityGroupByName(groupName)
+			if(!group) return true 
+			def permissions = group.IpPermissions.findAll {it.ToPort == port }.findAll {it.IpProtocol == protocol }
+			if(!permissions) return true
+			println "Permissions: $permissions"
+			def match = permissions.findAll { it.IpRanges.CidrIp == cidr }
+			if(!match) return true
+			println match
+			return false
+		}
+	}
+	
+	@TaskAction
+	void runTask() {
+		def result = project.runCommand("aws ec2 authorize-security-group-ingress --group-name $groupName --protocol $protocol --port $port --cidr $cidr")
+	}
+}
+
+class CommandLineTask extends DefaultTask {
+	
+}
+
+class CreateSecurityGroup extends DefaultTask {
+	@Input
+	String groupName
+	
+	@Input
+	String description
+	
+	@Input @Optional
+	String vpcId
+	
+	String groupId
+	
+	CreateSecurityGroup()
+	{
+		onlyIf { !project.findSecurityGroupByName(groupName) }
+	}
+
+	@TaskAction
+	void runTask() {
+		vpcId = project.vpcId
+		groupId = createSecurityGroup(groupName, description, vpcId)
+	}
+
+	//  http://docs.aws.amazon.com/cli/latest/reference/ec2/create-security-group.html
+	def createSecurityGroup(String groupName, String description, String vpcId) {
+		def json = project.runCommand("aws ec2 create-security-group --group-name $groupName --description \"${description}\" --vpc-id $vpcId")
+		return json.GroupId
+	}
+
+}
+
+def getVpcId() {
+	def json = runCommand('aws ec2 describe-vpcs')
+	def vpcId = json.Vpcs[0].VpcId
+	return vpcId
+}
+
+def findSecurityGroupByName(String name) {
+	try 
+	{
+		def json = runCommand("aws ec2 describe-security-groups --group-names $name")
+		return json.SecurityGroups[0]
+	}
+	catch(Exception)
+	{
+		// AWS returns non-zero exit code if it can't find any groups matching those names
+		return null
+	}
+}
+
+
+/*
+Create a security group
+aws ec2 authorize-security-group-ingress --group-id sg-903004f8 --protocol tcp --port 22 --cidr 203.0.113.0/24
+aws ec2 delete-security-group --group-id sg-903004f8
+*/
