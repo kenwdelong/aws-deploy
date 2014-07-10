@@ -58,7 +58,7 @@ config.securityGroups.each {
 task createAllSubnets(dependsOn: project.tasks.findAll { it.name.startsWith('createSubnet')}) {	
 }
 
-task createAllSecurityGroups(dependsOn: project.tasks.findAll { it.name.startsWith('createSecurityGroup')}) {
+task createAllSecurityGroups(dependsOn: (project.tasks.findAll { it.name.startsWith('createSecurityGroup')}).add(createAllSubnets)) {
 }
 
 // ======================== Class library ==========================
@@ -78,8 +78,13 @@ class CreateSubnet extends AwsTask
 	CreateSubnet() 
 	{
 		onlyIf {
-			// TODO add
-			true
+			println "Only If..."
+			def subnets = runCommand('aws ec2 describe-subnets')
+			println subnets
+			def match = subnets.Subnets.find { it.CidrBlock == cidr }
+			println "Match $match"
+			if(match) return false
+			return true
 		}
 	}
 	
@@ -132,8 +137,9 @@ class AuthorizeSecurityGroupIngress extends AwsTask {
 	}
 }
 
-class CommandLineTask extends DefaultTask {
-	def runCommand(command) {
+class CommandLineTask extends DefaultTask 
+{
+	def runCommand(String command) {
 		StringBuilder errorCatcher = new StringBuilder()
 		def process = command.execute()
 		process.consumeProcessErrorStream(errorCatcher)
