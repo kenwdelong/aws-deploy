@@ -1,0 +1,39 @@
+- we'll have to add a "task list ready" listener and add all the dynamic tasks.  Probably we'll have to enforce 
+dependency order here (subnets before security groups, etc)
+- pass Topology in as a property to AwsTask
+- pre-process configs (possibly in Toplogy?) - set up subnets, etc
+- parameterize config file name
+- tag everything with env
+- delete env 
+
+
+get vpc id
+get ids of all resources with env tag
+create public subnet
+create app subnet
+create private subnet
+create inbound security group
+create appserver security group
+create database security group
+create bastion security group
+create database
+  save credentials and url, add to Chef data bag
+create appserver instances
+  different availability zones
+  bootstrap with knife
+  run chef-client
+create elb
+  associate with appservers
+create bastion
+create NAT?
+switch EIP over to new stack
+copy old logs over to s3
+remove old stack
+
+PARAMETERS
+env (required)
+numAppServers (default = 2)
+
+TAGS
+env=prod,stag
+name=appserver,dbserver,nat,bastion

@@ -1,43 +1,71 @@
 import groovy.json.*
+import java.util.concurrent.ConcurrentHashMap
 
 def env = project.hasProperty('env') ? project.getProperty('env') : 'dev'
 ext.env = env
 logger.quiet "Loading configuration for environment [$env]."
-//def configFile = file("$rootDir/gradle/config/buildConfig.groovy")
-//def parsedConfig = new ConfigSlurper(env).parse(configFile.toURL())
-//ext.config = parsedConfig
+def configFile = file("network.groovy")
+def parsedConfig = new ConfigSlurper(env).parse(configFile.toURL())
+ext.config = parsedConfig
+ext.topology = new Topology(parsedConfig)
 
-task findVpc {
+task findVpc(type: FindVpcTask) {
+	cidrBlock = config.vpc.baseIp
 	doLast {
 		project.ext.vpcId = vpcId
 	}
 }
 
-task createTestSecurityGroup(type: CreateSecurityGroup, dependsOn: findVpc) {
-	groupName = "test2"
-	description = "testing API"
-	doLast {
-		logger.quiet groupId
+config.securityGroups.each {
+	sg ->
+	task "createSecurityGroup${sg.name}"(type: CreateSecurityGroup, dependsOn: findVpc) {
+		groupName = sg.name
+		description = sg.description
+		doLast { logger.quiet "Added security group $sg.name" }
 	}
-}
-
-task addTestSecurityIngress(type: AuthorizeSecurityGroupIngress) {
-	groupName = 'test2'
-	protocol = 'tcp'
-	port = 8765
-	cidr = "10.8.0.0/16"
+	sg.ingressRules.eachWithIndex {
+		rule, i ->
+		if(rule.cidr)
+		{
+			task "addSecurityIngressRule${sg.name}$i"(type: AuthorizeSecurityGroupIngress, dependsOn: "createSecurityGroup${sg.name}") {
+				groupName sg.name
+				port = rule.port
+				cidr = rule.cidr
+				doLast { logger.quiet "Added ingress rule for port $port to group $sg.name" }
+			}
+		}
+		if(rule.subnet)
+		{
+			// TODO add task here to create rules for subnet
+		}
+	}
 }
 
 
 
 // ======================== Class library ==========================
 
+class CreateSubnet extends AwsTask
+{
+	String vpcId
+	
+	@Input
+	String cidr
+	
+	String availabilityZone
+	
+	@TaskAction
+	void runTask()
+	{
+	}
+}
+
 class AuthorizeSecurityGroupIngress extends AwsTask {
 	@Input
 	String groupName
 	
 	@Input
-	String protocol
+	String protocol = 'tcp'
 	
 	@Input 
 	Integer port
@@ -85,6 +113,13 @@ class CommandLineTask extends DefaultTask {
 
 class AwsTask extends CommandLineTask 
 {
+	Topology topology
+	
+	AwsTask()
+	{
+		group = 'AWS Tasks'
+	}
+	
 	def findSecurityGroupByName(String name) 
 	{
 		try
@@ -106,10 +141,10 @@ class AwsTask extends CommandLineTask
 		return json.GroupId
 	}
 
-	def findVpcId() 
+	def findVpcId(String cidrBlock) 
 	{
 		def json = runCommand('aws ec2 describe-vpcs')
-		def vpcId = json.Vpcs[0].VpcId
+		def vpcId = json.Vpcs.find { it.CidrBlock.startsWith(cidrBlock)}.VpcId
 		return vpcId
 	}
 	
@@ -142,14 +177,99 @@ class CreateSecurityGroup extends AwsTask {
 class FindVpcTask extends AwsTask {
 	String vpcId
 	
+	@Input
+	String cidrBlock
+	
 	@TaskAction
 	def runTask()
 	{
-		vpcId = findVpcId()
-		logger.quiet "VPC Id is $vpcId"
+		vpcId = findVpcId(cidrBlock)
+		logger.quiet "VPC Id is [$vpcId]"
 	}
 }
 
+
+class Topology
+{
+	private IdNameMap securityGroups = new IdNameMap()
+	Map subnetConfig = [:]
+	
+	Topology(def config)
+	{
+		config.subnets.each {
+			subnet ->
+			def fullCidrs = subnet.cidrs.collect {
+				cidr ->
+				def fullCidr = config.vpc.baseIp + cidr + '.0/24'
+			}
+			subnetConfig[subnet.name] = [name: subnet.name, cidrs: fullCidrs]
+		}
+	} 
+	
+	void addSubnet(def subnet)
+	{
+		// this uses the AWS return syntax
+		String name = subnet.Tags.find({ it.Key == 'Name' }).Value
+		String id = subnet.SubnetId
+		subnets.addItemWithValues(subnet, name, id)
+	}
+	
+	def getSubnetByName(String name)
+	{
+		return subnets.getItemByName(name)
+	}
+	
+	def getSubnetById(String id)
+	{
+		return subnets.getItemById(id)
+	}
+	
+	void addSecurityGroup(def sg) 
+	{
+		securityGroups.addItem(sg, "GroupName", "GroupId")
+	}
+	
+	def getSecurityGroupByName(String name)
+	{
+		securityGroups.getItemByName(name)
+	}
+	
+	def getSecurityGroupById(String id)
+	{
+		securityGroups.getItemById(id)
+	}
+}
+
+class IdNameMap
+{
+	def itemsById = [:] as ConcurrentHashMap
+	def itemIdsByName = [:] as ConcurrentHashMap
+	
+	void addItem(def item, String nameKey, String idKey) 
+	{
+		def name = item."$namekey"
+		def id = item."$idKey"
+		itemsById['id'] = item
+		itemIdsByName['name'] = id 	
+	}
+	
+	void addItemWithValues(def item, String name, String id) 
+	{
+		itemsById['id'] = item
+		itemIdsByName['name'] = id 	
+	}
+	
+	def getItemByName(String name)
+	{
+		def id = itemIdsByName[name]
+		return getItemById(id)
+	}
+	
+	def getItemById(String id)
+	{
+		return itemsById[id]
+	}
+}
 
 
 /*
