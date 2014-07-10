@@ -20,9 +20,12 @@ config.subnets.each {
 	subnet ->
 	config.availablityZones.eachWithIndex {
 		zone, i ->
-		task "createSubnet${subnet.name}$zone"(type: CreateSubnet, dependsOn: findVpc) {
+		def psubnetName = "${subnet.name}-$zone"
+		task "createSubnet${psubnetName}"(type: CreateSubnet, dependsOn: findVpc) {
 			cidr = "${config.vpc.baseIp}${subnet.cidrs[i]}.0/24"
 			availabilityZone = zone
+			subnetName = "${env}-$psubnetName"
+			topology = project.topology
 		}
 	}
 }
@@ -65,6 +68,9 @@ class CreateSubnet extends AwsTask
 	
 	String availabilityZone
 	
+	@Input
+	String subnetName
+	
 	CreateSubnet() 
 	{
 		onlyIf {
@@ -80,9 +86,12 @@ class CreateSubnet extends AwsTask
 		def cmd = "aws ec2 create-subnet --vpc-id $vpcId --cidr-block $cidr"
 		if(availabilityZone) cmd = "$cmd --availability-zone $availabilityZone"
 		def result = runCommand(cmd)
-		// TODO Need to add the Name tag before this will work
-		//topology.addSubnet result.Subnet
-		logger.quiet "Created subnet [$result.Subnet.SubnetId]" 
+		def id = result.Subnet.SubnetId
+		addTags(id, [Name: subnetName, Env: project.env])
+		// get the new description with the name
+		result = runCommand("aws ec2 describe-subnets --subnet-ids $id")
+		topology.addSubnet result.Subnets[0]
+		logger.quiet "Created subnet [$id]" 
 	}
 }
 
@@ -174,6 +183,12 @@ class AwsTask extends CommandLineTask
 		return vpcId
 	}
 	
+	def addTags(String id, Map tags)
+	{
+		def taglist = tags.collect { "Key=$it.key,Value=$it.value" }.join(' ')
+		def result = runCommand("aws ec2 create-tags --resources $id --tags $taglist")
+	}
+	
 }
 
 class CreateSecurityGroup extends AwsTask {
@@ -218,6 +233,7 @@ class FindVpcTask extends AwsTask {
 class Topology
 {
 	private IdNameMap securityGroups = new IdNameMap()
+	private IdNameMap subnets = new IdNameMap()
 	Map subnetConfig = [:]
 	
 	Topology(def config)
