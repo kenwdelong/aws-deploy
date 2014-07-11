@@ -1,4 +1,4 @@
-availablityZones = ['us-west-2a', 'us-west-2b', 'us-west-2c']
+availabilityZones = ['us-west-2a', 'us-west-2b', 'us-west-2c']
 vpc.baseIp = "10.0."  // assumes /16
 
 securityGroups = [
@@ -20,9 +20,9 @@ environments {
 	}
 	dev {
 		subnets = [
-			[name: 'Public', cidrs: [10,11,12]],
+			[name: 'Public', cidrs: [10,11,12]]/*,
 			[name: 'App', cidrs: [13,14,15]],
-			[name: 'Private', cidrs: [16,17,18]]
+			[name: 'Private', cidrs: [16,17,18]]*/
 		]
 	}
 }

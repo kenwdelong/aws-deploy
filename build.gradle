@@ -1,5 +1,5 @@
 import groovy.json.*
-import java.util.concurrent.ConcurrentHashMap
+import groovy.transform.ToString
 
 def env = project.hasProperty('env') ? project.getProperty('env') : 'dev'
 ext.env = env
@@ -7,7 +7,11 @@ logger.quiet "Loading configuration for environment [$env]."
 def configFile = file("network.groovy")
 def parsedConfig = new ConfigSlurper(env).parse(configFile.toURL())
 ext.config = parsedConfig
-ext.topology = new Topology(parsedConfig)
+ext.topology = new Topology(parsedConfig, env)
+
+task dummy {
+	
+}
 
 task findVpc(type: FindVpcTask) {
 	cidrBlock = config.vpc.baseIp
@@ -16,41 +20,32 @@ task findVpc(type: FindVpcTask) {
 	}
 }
 
-config.subnets.each {
+topology.subnets.each {
 	subnet ->
-	config.availablityZones.eachWithIndex {
-		zone, i ->
-		def psubnetName = "${subnet.name}-$zone"
-		task "createSubnet${psubnetName}"(type: CreateSubnet, dependsOn: findVpc) {
-			cidr = "${config.vpc.baseIp}${subnet.cidrs[i]}.0/24"
-			availabilityZone = zone
-			subnetName = "${env}-$psubnetName"
-			topology = project.topology
-		}
+	task "createSubnet${subnet.name}"(type: CreateSubnet, dependsOn: findVpc) {
+		cidr = subnet.cidr
+		availabilityZone = subnet.zone
+		subnetName = subnet.name
+		topology = project.topology
 	}
 }
 
-config.securityGroups.each {
+topology.securityGroups.each {
 	sg ->
-	task "createSecurityGroup${sg.name}"(type: CreateSecurityGroup, dependsOn: findVpc) {
+	task "createSecurityGroup${sg.name}"(type: CreateSecurityGroup, dependsOn: [findVpc, 'createAllSubnets']) {
 		groupName = sg.name
 		description = sg.description
-		doLast { logger.quiet "Added security group $sg.name" }
+		topology = project.topology
 	}
 	sg.ingressRules.eachWithIndex {
 		rule, i ->
-		if(rule.cidr)
-		{
-			task "addSecurityIngressRule${sg.name}$i"(type: AuthorizeSecurityGroupIngress, dependsOn: "createSecurityGroup${sg.name}") {
-				groupName sg.name
-				port = rule.port
-				cidr = rule.cidr
-				doLast { logger.quiet "Added ingress rule for port $port to group $sg.name" }
-			}
-		}
-		if(rule.subnet)
-		{
-			// TODO add task here to create rules for subnet
+		println "Adding $rule.cidr"
+		task "addSecurityIngressRule${sg.name}$i"(type: AuthorizeSecurityGroupIngress, dependsOn: "createSecurityGroup${sg.name}") {
+			groupName = sg.name
+			port = rule.port
+			cidr = rule.cidr
+			topology = project.topology
+			doLast { logger.quiet "Added ingress rule for port $port from $cidr to group $sg.name" }
 		}
 	}
 }
@@ -58,7 +53,7 @@ config.securityGroups.each {
 task createAllSubnets(dependsOn: project.tasks.findAll { it.name.startsWith('createSubnet')}) {	
 }
 
-task createAllSecurityGroups(dependsOn: (project.tasks.findAll { it.name.startsWith('createSecurityGroup')}).add(createAllSubnets)) {
+task createAllSecurityGroups(dependsOn: (project.tasks.findAll { it.name.startsWith('addSecurityIngressRule')}) << createAllSubnets) {
 }
 
 // ======================== Class library ==========================
@@ -78,13 +73,13 @@ class CreateSubnet extends AwsTask
 	CreateSubnet() 
 	{
 		onlyIf {
-			println "Only If..."
-			def subnets = runCommand('aws ec2 describe-subnets')
-			println subnets
-			def match = subnets.Subnets.find { it.CidrBlock == cidr }
-			println "Match $match"
-			if(match) return false
-			return true
+//			println "Only If..."
+//			def result = runCommand('aws ec2 describe-subnets')
+//			println result
+//			def match = result.Subnets.find { it.CidrBlock == cidr }
+//			println "Match $match"
+//			if(match) return false
+			return false
 		}
 	}
 	
@@ -96,11 +91,9 @@ class CreateSubnet extends AwsTask
 		if(availabilityZone) cmd = "$cmd --availability-zone $availabilityZone"
 		def result = runCommand(cmd)
 		def id = result.Subnet.SubnetId
+		topology.subnets.find { it.name == subnetName }.id = id
 		addTags(id, [Name: subnetName, Env: project.env])
-		// get the new description with the name
-		result = runCommand("aws ec2 describe-subnets --subnet-ids $id")
-		topology.addSubnet result.Subnets[0]
-		logger.quiet "Created subnet [$id]" 
+		logger.quiet "Created subnet [$subnetName] with [$id]" 
 	}
 }
 
@@ -123,36 +116,46 @@ class AuthorizeSecurityGroupIngress extends AwsTask {
 		onlyIf {
 			def group = findSecurityGroupByName(groupName)
 			if(!group) return true 
+			// TODO this should probably go somewhere else
+			topology.securityGroups.find {it.name == groupName }.id = group.GroupId
 			def permissions = group.IpPermissions.findAll {it.ToPort == port }.findAll {it.IpProtocol == protocol }
 			if(!permissions) return true
 			def match = permissions.collect { it.IpRanges.findAll { it.CidrIp == cidr }}
-			if(!match) return true
+			// returns an [[]] if empty
+			if(!match[0]) return true
 			return false
 		}
 	}
 	
 	@TaskAction
 	void runTask() {
-		def result = runCommand("aws ec2 authorize-security-group-ingress --group-name $groupName --protocol $protocol --port $port --cidr $cidr")
+		def groupId = topology.securityGroups.find { it.name == groupName }.id
+		// FIXME if create group was skipped, this is null
+		def result = runCommand("aws ec2 authorize-security-group-ingress --group-id $groupId --protocol $protocol --port $port --cidr $cidr")
 	}
 }
 
-class CommandLineTask extends DefaultTask 
-{
-	def runCommand(String command) {
-		StringBuilder errorCatcher = new StringBuilder()
-		def process = command.execute()
-		process.consumeProcessErrorStream(errorCatcher)
-		process.waitFor()
-		
-		def result = process.getIn().text
+class CreateSecurityGroup extends AwsTask {
+	@Input
+	String groupName
 	
-		if(process.exitValue() != 0) {
-			throw new GradleException(errorCatcher.toString())
-		}
-		
-		def json = new JsonSlurper().parseText(result)
-		return json
+	@Input
+	String description
+	
+	@Input @Optional
+	String vpcId
+	
+	CreateSecurityGroup()
+	{
+		onlyIf { !findSecurityGroupByName(groupName) }
+	}
+
+	@TaskAction
+	void runTask() {
+		vpcId = project.vpcId
+		def groupId = createSecurityGroup(groupName, description, vpcId)
+		topology.securityGroups.find { it.name == groupName }.id = groupId
+		logger.quiet "Added security group $groupName with id $groupId" 
 	}
 }
 
@@ -167,9 +170,16 @@ class AwsTask extends CommandLineTask
 	
 	def findSecurityGroupByName(String name) 
 	{
+		def json = runCommand("aws ec2 describe-security-groups")
+		def match = json.SecurityGroups.find { it.GroupName == name }
+		return match
+	}
+	
+	def findSecurityGroupById(String id) 
+	{
 		try
 		{
-			def json = runCommand("aws ec2 describe-security-groups --group-names $name")
+			def json = runCommand("aws ec2 describe-security-groups --group-ids $id")
 			return json.SecurityGroups[0]
 		}
 		catch(Exception)
@@ -215,27 +225,22 @@ class AwsTask extends CommandLineTask
 	
 }
 
-class CreateSecurityGroup extends AwsTask {
-	@Input
-	String groupName
+class CommandLineTask extends DefaultTask 
+{
+	def runCommand(String command) {
+		StringBuilder errorCatcher = new StringBuilder()
+		def process = command.execute()
+		process.consumeProcessErrorStream(errorCatcher)
+		process.waitFor()
+		
+		def result = process.getIn().text
 	
-	@Input
-	String description
-	
-	@Input @Optional
-	String vpcId
-	
-	String groupId
-	
-	CreateSecurityGroup()
-	{
-		onlyIf { !findSecurityGroupByName(groupName) }
-	}
-
-	@TaskAction
-	void runTask() {
-		vpcId = project.vpcId
-		groupId = createSecurityGroup(groupName, description, vpcId)
+		if(process.exitValue() != 0) {
+			throw new GradleException(errorCatcher.toString())
+		}
+		
+		def json = new JsonSlurper().parseText(result)
+		return json
 	}
 }
 
@@ -256,90 +261,74 @@ class FindVpcTask extends AwsTask {
 
 class Topology
 {
-	private IdNameMap securityGroups = new IdNameMap()
-	private IdNameMap subnets = new IdNameMap()
-	Map subnetConfig = [:]
+	def subnets = []
+	def securityGroups = []
 	
-	Topology(def config)
+	Topology(def config, def env)
 	{
 		config.subnets.each {
 			subnet ->
-			def fullCidrs = subnet.cidrs.collect {
-				cidr ->
-				def fullCidr = config.vpc.baseIp + cidr + '.0/24'
+			subnet.cidrs.eachWithIndex {
+				cidr, i ->
+				def zone = config.availabilityZones[i]
+				def c = "${config.vpc.baseIp}${cidr}.0/24"
+				def name = "${env}-${subnet.name}-$zone"
+				Subnet s = new Subnet(name: name, cidr: c, zone: zone)
+				subnets << s
 			}
-			subnetConfig[subnet.name] = [name: subnet.name, cidrs: fullCidrs]
 		}
-	} 
-	
-	void addSubnet(def subnet)
-	{
-		// this uses the AWS return syntax
-		String name = subnet.Tags.find({ it.Key == 'Name' }).Value
-		String id = subnet.SubnetId
-		subnets.addItemWithValues(subnet, name, id)
-	}
-	
-	def getSubnetByName(String name)
-	{
-		return subnets.getItemByName(name)
-	}
-	
-	def getSubnetById(String id)
-	{
-		return subnets.getItemById(id)
-	}
-	
-	void addSecurityGroup(def sg) 
-	{
-		securityGroups.addItem(sg, "GroupName", "GroupId")
-	}
-	
-	def getSecurityGroupByName(String name)
-	{
-		securityGroups.getItemByName(name)
-	}
-	
-	def getSecurityGroupById(String id)
-	{
-		securityGroups.getItemById(id)
-	}
+		
+		config.securityGroups.each {
+			sg ->
+			def name = "${env}-$sg.name"
+			SecurityGroup group = new SecurityGroup(name: name, description: sg.description)
+			securityGroups << group
+			
+			sg.ingressRules.each {
+				rule ->
+				if(rule.cidr) 
+				{
+					IngressRule ingressRule = new IngressRule(port: rule.port, cidr: rule.cidr)
+					group.ingressRules << ingressRule
+				}
+				if(rule.subnet)
+				{
+					subnets.findAll { it.name.contains(rule.subnet) }.each {
+						subnet ->
+						def desc = "Port $rule.port from subnet $subnet.name"
+						IngressRule ingressRule = new IngressRule(port: rule.port, cidr: subnet.cidr, description: desc)
+						group.ingressRules << ingressRule
+					}
+				}
+			}
+		}
+		//securityGroups.each { println it }
+	} 	
 }
 
-class IdNameMap
+@ToString
+class Subnet
 {
-	def itemsById = [:] as ConcurrentHashMap
-	def itemIdsByName = [:] as ConcurrentHashMap
-	
-	void addItem(def item, String nameKey, String idKey) 
-	{
-		def name = item."$namekey"
-		def id = item."$idKey"
-		itemsById['id'] = item
-		itemIdsByName['name'] = id 	
-	}
-	
-	void addItemWithValues(def item, String name, String id) 
-	{
-		itemsById['id'] = item
-		itemIdsByName['name'] = id 	
-	}
-	
-	def getItemByName(String name)
-	{
-		def id = itemIdsByName[name]
-		return getItemById(id)
-	}
-	
-	def getItemById(String id)
-	{
-		return itemsById[id]
-	}
+	String name
+	String id
+	String cidr
+	String zone
 }
 
+@ToString
+class SecurityGroup
+{
+	String name
+	String id
+	String description
+	List<IngressRule> ingressRules = []
+}
 
-/*
-Create a security group
-aws ec2 authorize-security-group-ingress --group-id sg-903004f8 --protocol tcp --port 22 --cidr 203.0.113.0/24
-aws ec2 delete-security-group --group-id sg-903004f8
-*/
+@ToString
+class IngressRule
+{
+	Integer port
+	String cidr
+	String description
+}
+
