@@ -72,13 +72,10 @@ class CreateSubnet extends AwsTask
 	CreateSubnet() 
 	{
 		onlyIf {
-//			println "Only If..."
-//			def result = runCommand('aws ec2 describe-subnets')
-//			println result
-//			def match = result.Subnets.find { it.CidrBlock == cidr }
-//			println "Match $match"
-//			if(match) return false
-			return false
+			def result = runCommand('aws ec2 describe-subnets')
+			def match = result.Subnets.find { it.CidrBlock == cidr }
+			if(match) return false
+			else return true
 		}
 	}
 	
