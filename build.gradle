@@ -39,7 +39,6 @@ topology.securityGroups.each {
 	}
 	sg.ingressRules.eachWithIndex {
 		rule, i ->
-		println "Adding $rule.cidr"
 		task "addSecurityIngressRule${sg.name}$i"(type: AuthorizeSecurityGroupIngress, dependsOn: "createSecurityGroup${sg.name}") {
 			groupName = sg.name
 			port = rule.port
@@ -91,7 +90,7 @@ class CreateSubnet extends AwsTask
 		if(availabilityZone) cmd = "$cmd --availability-zone $availabilityZone"
 		def result = runCommand(cmd)
 		def id = result.Subnet.SubnetId
-		topology.subnets.find { it.name == subnetName }.id = id
+		topology.findSubnetByName(subnetName).id = id
 		addTags(id, [Name: subnetName, Env: project.env])
 		logger.quiet "Created subnet [$subnetName] with [$id]" 
 	}
@@ -115,9 +114,7 @@ class AuthorizeSecurityGroupIngress extends AwsTask {
 		// AWS will bonk if you try to apply the same rule twice...sigh
 		onlyIf {
 			def group = findSecurityGroupByName(groupName)
-			if(!group) return true 
-			// TODO this should probably go somewhere else
-			topology.securityGroups.find {it.name == groupName }.id = group.GroupId
+			if(!group) return true
 			def permissions = group.IpPermissions.findAll {it.ToPort == port }.findAll {it.IpProtocol == protocol }
 			if(!permissions) return true
 			def match = permissions.collect { it.IpRanges.findAll { it.CidrIp == cidr }}
@@ -129,8 +126,7 @@ class AuthorizeSecurityGroupIngress extends AwsTask {
 	
 	@TaskAction
 	void runTask() {
-		def groupId = topology.securityGroups.find { it.name == groupName }.id
-		// FIXME if create group was skipped, this is null
+		def groupId = topology.findSecurityGroupByName(groupName).id
 		def result = runCommand("aws ec2 authorize-security-group-ingress --group-id $groupId --protocol $protocol --port $port --cidr $cidr")
 	}
 }
@@ -151,10 +147,11 @@ class CreateSecurityGroup extends AwsTask {
 	}
 
 	@TaskAction
-	void runTask() {
+	void runTask() 
+	{
 		vpcId = project.vpcId
 		def groupId = createSecurityGroup(groupName, description, vpcId)
-		topology.securityGroups.find { it.name == groupName }.id = groupId
+		topology.addIdToSecurityGroup(groupName, groupId)
 		logger.quiet "Added security group $groupName with id $groupId" 
 	}
 }
@@ -171,6 +168,11 @@ class AwsTask extends CommandLineTask
 	def findSecurityGroupByName(String name) 
 	{
 		def json = runCommand("aws ec2 describe-security-groups")
+		// take all the groups we have in AWS already, and record their ids.
+		json.SecurityGroups.each {
+			group ->
+			topology.addIdToSecurityGroup(group.GroupName, group.GroupId)
+		}
 		def match = json.SecurityGroups.find { it.GroupName == name }
 		return match
 	}
@@ -303,7 +305,24 @@ class Topology
 			}
 		}
 		//securityGroups.each { println it }
+		
 	} 	
+
+	def findSubnetByName(String subnetName)
+	{
+		subnets.find { it.name == subnetName }
+	}
+	
+	def findSecurityGroupByName(String groupName)
+	{
+		securityGroups.find { it.name == groupName }
+	}
+	
+	void addIdToSecurityGroup(String groupName, String id)
+	{
+		def group = findSecurityGroupByName(groupName)
+		if(group) group.id = id
+	}
 }
 
 @ToString
