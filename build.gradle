@@ -54,8 +54,8 @@ topology.instances.eachWithIndex {
 	task "runInstance$i"(type: RunInstance, dependsOn: ['createAllSubnets', 'createAllSecurityGroups']) {
 		ami = instance.ami
 		type = instance.type
-		securityGroupId = instance.securityGroupId
-		subnetId = instance.subnetId
+		securityGroup = instance.securityGroup
+		subnet = instance.subnet
 		keyPairName = instance.keyPairName
 	}
 }
@@ -80,10 +80,10 @@ class RunInstance extends AwsTask
 	String type
 	
 	@Input 
-	String securityGroupId
+	SecurityGroup securityGroup
 	
 	@Input 
-	String subnetId
+	Subnet subnet
 	
 	@Input
 	String keyPairName
@@ -91,7 +91,7 @@ class RunInstance extends AwsTask
 	@TaskAction
 	void runTask()
 	{
-		def result = runInstance(ami, type, securityGroupId, subnetId, keyPairName)
+		def result = runInstance(ami, type, securityGroup.id, subnet.id, keyPairName)
 		println "Created instance $result"
 	}
 }
@@ -111,8 +111,8 @@ class CreateSubnet extends AwsTask
 	CreateSubnet() 
 	{
 		onlyIf {
-			def result = runCommand('aws ec2 describe-subnets')
-			def match = result.Subnets.find { it.CidrBlock == cidr }
+			def result = findSubnets()
+			def match = result.find { it.CidrBlock == cidr }
 			if(match) return false
 			else return true
 		}
@@ -126,7 +126,7 @@ class CreateSubnet extends AwsTask
 		if(availabilityZone) cmd = "$cmd --availability-zone $availabilityZone"
 		def result = runCommand(cmd)
 		def id = result.Subnet.SubnetId
-		topology.findSubnetByName(subnetName).id = id
+		topology.addIdToSubnet(subnetName, id)
 		addTags(id, [Name: subnetName, Env: project.env])
 		logger.quiet "Created subnet [$subnetName] with [$id]" 
 	}
@@ -195,10 +195,32 @@ class CreateSecurityGroup extends AwsTask {
 class AwsTask extends CommandLineTask 
 {
 	Topology topology
+	static def describeSecurityGroupCache
+	static def describeSubnetsCache
 	
 	AwsTask()
 	{
 		group = 'AWS Tasks'
+	}
+	
+	def findSubnets()
+	{
+		def json
+		if(describeSubnetsCache)
+		{
+			json = describeSubnetsCache
+		}
+		else
+		{
+			json = runCommand('aws ec2 describe-subnets')
+			describeSubnetsCache = json
+			json.Subnets.each {
+				subnet ->
+				def name = subnet.Tags?.find { it.Key == 'Name'}?.Value
+				topology.addIdToSubnet(name, subnet.SubnetId)
+			}
+		}
+		return json.Subnets
 	}
 	
 	def runInstance(String ami, String type, String securityGroupId, String subnetId, String keyPairName)
@@ -210,11 +232,20 @@ class AwsTask extends CommandLineTask
 	
 	def findSecurityGroupByName(String name) 
 	{
-		def json = runCommand("aws ec2 describe-security-groups")
-		// take all the groups we have in AWS already, and record their ids.
-		json.SecurityGroups.each {
-			group ->
-			topology.addIdToSecurityGroup(group.GroupName, group.GroupId)
+		def json
+		if(describeSecurityGroupCache)
+		{
+			json = describeSecurityGroupCache
+		}
+		else
+		{
+			json = runCommand("aws ec2 describe-security-groups")
+			describeSecurityGroupCache = json
+			// take all the groups we have in AWS already, and record their ids.
+			json.SecurityGroups.each {
+				group ->
+				topology.addIdToSecurityGroup(group.GroupName, group.GroupId)
+			}
 		}
 		def match = json.SecurityGroups.find { it.GroupName == name }
 		return match
@@ -274,17 +305,16 @@ class CommandLineTask extends DefaultTask
 {
 	def runCommand(String command) {
 		StringBuilder errorCatcher = new StringBuilder()
+		StringBuilder stdOut = new StringBuilder()
 		def process = command.execute()
-		process.consumeProcessErrorStream(errorCatcher)
+		process.consumeProcessOutput(stdOut, errorCatcher)
 		process.waitFor()
 		
-		def result = process.getIn().text
-	
 		if(process.exitValue() != 0) {
 			throw new GradleException(errorCatcher.toString())
 		}
-		
-		def json = new JsonSlurper().parseText(result)
+			
+		def json = new JsonSlurper().parseText(stdOut.toString())
 		return json
 	}
 }
@@ -323,7 +353,7 @@ class Topology
 				subnets << s
 			}
 		}
-		//subnets.each { println it }
+		subnets.each { println it }
 		
 		config.securityGroups.each {
 			sg ->
@@ -357,16 +387,20 @@ class Topology
 			// Put a copy in each AZ
 			def targetSubnets = subnets.findAll { it.name.contains(instance.subnet)}.each {
 				targetSubnet ->
-				Instance i = new Instance(ami: instance.ami, keyPairName: instance.key, type: instance.type, subnetId: targetSubnet.id, securityGroupId: securityGroup.id)
+				Instance i = new Instance(ami: instance.ami, keyPairName: instance.key, type: instance.type, subnet: targetSubnet, securityGroup: securityGroup)
 				instances << i
 			}
 		}
-		//instances.each { println it }
+		instances.each { println it }
 		
 	} 	
 
 	def findSubnetByName(String subnetName)
 	{
+		println "Looking for $subnetName"
+		println "in a list of"
+		subnets.each { println it }
+		println "\n"
 		subnets.find { it.name == subnetName }
 	}
 	
@@ -379,6 +413,13 @@ class Topology
 	{
 		def group = findSecurityGroupByName(groupName)
 		if(group) group.id = id
+	}
+	
+	void addIdToSubnet(String subnetName, String id)
+	{
+		def subnet = findSubnetByName(subnetName)
+		if(subnet) subnet.id = id
+		if(subnet) println "Added id $id to $subnetName"
 	}
 }
 
@@ -413,8 +454,8 @@ class Instance
 {
 	String ami
 	String keyPairName
-	String securityGroupId
+	SecurityGroup securityGroup
 	String type
-	String subnetId
+	Subnet subnet
 }
 
