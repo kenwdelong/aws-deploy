@@ -49,13 +49,52 @@ topology.securityGroups.each {
 	}
 }
 
+topology.instances.eachWithIndex {
+	instance, i ->
+	task "runInstance$i"(type: RunInstance, dependsOn: ['createAllSubnets', 'createAllSecurityGroups']) {
+		ami = instance.ami
+		type = instance.type
+		securityGroupId = instance.securityGroupId
+		subnetId = instance.subnetId
+		keyPairName = instance.keyPairName
+	}
+}
+
 task createAllSubnets(dependsOn: project.tasks.findAll { it.name.startsWith('createSubnet')}) {	
 }
 
 task createAllSecurityGroups(dependsOn: (project.tasks.findAll { it.name.startsWith('addSecurityIngressRule')}) << createAllSubnets) {
 }
 
+task runAllInstances(dependsOn: (project.tasks.findAll { it.name.startsWith('runInstance')}) << createAllSecurityGroups) {
+}
+
 // ======================== Class library ==========================
+
+class RunInstance extends AwsTask
+{
+	@Input
+	String ami
+	
+	@Input
+	String type
+	
+	@Input 
+	String securityGroupId
+	
+	@Input 
+	String subnetId
+	
+	@Input
+	String keyPairName
+	
+	@TaskAction
+	void runTask()
+	{
+		def result = runInstance(ami, type, securityGroupId, subnetId, keyPairName)
+		println "Created instance $result"
+	}
+}
 
 class CreateSubnet extends AwsTask
 {
@@ -162,6 +201,13 @@ class AwsTask extends CommandLineTask
 		group = 'AWS Tasks'
 	}
 	
+	def runInstance(String ami, String type, String securityGroupId, String subnetId, String keyPairName)
+	{
+		def json = runCommand("aws ec2 run-instances --image-id $ami --instance-type $type --key-name $keyPairName --security-group-ids $securityGroupId --subnet-id $subnetId")
+		def id = json.Instances[0].InstanceId
+		return id
+	}
+	
 	def findSecurityGroupByName(String name) 
 	{
 		def json = runCommand("aws ec2 describe-security-groups")
@@ -262,6 +308,7 @@ class Topology
 {
 	def subnets = []
 	def securityGroups = []
+	def instances = []
 	
 	Topology(def config, def env)
 	{
@@ -276,6 +323,7 @@ class Topology
 				subnets << s
 			}
 		}
+		//subnets.each { println it }
 		
 		config.securityGroups.each {
 			sg ->
@@ -302,6 +350,18 @@ class Topology
 			}
 		}
 		//securityGroups.each { println it }
+		
+		config.instances.each {
+			instance ->
+			def securityGroup = securityGroups.find {it.name.contains(instance.securityGroup) }
+			// Put a copy in each AZ
+			def targetSubnets = subnets.findAll { it.name.contains(instance.subnet)}.each {
+				targetSubnet ->
+				Instance i = new Instance(ami: instance.ami, keyPairName: instance.key, type: instance.type, subnetId: targetSubnet.id, securityGroupId: securityGroup.id)
+				instances << i
+			}
+		}
+		//instances.each { println it }
 		
 	} 	
 
@@ -346,5 +406,15 @@ class IngressRule
 	Integer port
 	String cidr
 	String description
+}
+
+@ToString
+class Instance
+{
+	String ami
+	String keyPairName
+	String securityGroupId
+	String type
+	String subnetId
 }
 

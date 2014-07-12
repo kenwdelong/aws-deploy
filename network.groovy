@@ -6,7 +6,15 @@ securityGroups = [
 			[port: 443, cidr: '0.0.0.0/0'], 
 			[port: 8080, subnet: 'Public']
 		]
+	],
+	[name: 'PublicLb', description: '443 from the world', ingressRules : [ 
+			[port: 443, cidr: '0.0.0.0/0']
+		]
 	]
+]
+
+instances = [
+	[ami: 'ami-b5a9d485', key: 'GradleKeyPair', securityGroup: 'AppServer', type: "m3.medium", subnet: 'App']
 ]
 
 environments {
@@ -20,8 +28,8 @@ environments {
 	}
 	dev {
 		subnets = [
-			[name: 'Public', cidrs: [10,11,12]]/*,
-			[name: 'App', cidrs: [13,14,15]],
+			[name: 'Public', cidrs: [10,11,12]],
+			[name: 'App', cidrs: [13,14,15]]/*,
 			[name: 'Private', cidrs: [16,17,18]]*/
 		]
 	}
