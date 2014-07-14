@@ -71,6 +71,22 @@ task runAllInstances(dependsOn: (project.tasks.findAll { it.name.startsWith('run
 
 // ======================== Class library ==========================
 
+class ChefBootstrap extends KnifeTask
+{
+	@TaskAction
+	void runTask()
+	{
+	'''
+	knife ec2 server create -I ami-b5a9d485 --flavor m3.medium --security-group-ids sg-a675c5c3 -N server01 --subnet subnet-3c23ec59 --ssh-key GradleKeyPair --aws-access-key-id XXX --aws-secret-access-key XXX --region us-west-2 --tags Env=Dev --run-list "recipe[redhen::appserver]" -E dev -i ~/.aws/GradleKeyPair.pem --associate-public-ip --ssh-user ubuntu
+	'''
+	}
+}
+
+class KnifeTask extends CommandLineTask 
+{
+	
+}
+
 class RunInstance extends AwsTask
 {
 	@Input
@@ -92,7 +108,7 @@ class RunInstance extends AwsTask
 	void runTask()
 	{
 		def result = runInstance(ami, type, securityGroup.id, subnet.id, keyPairName)
-		println "Created instance $result"
+		println "Created instance $result.InstanceId"
 	}
 }
 
@@ -225,9 +241,9 @@ class AwsTask extends CommandLineTask
 	
 	def runInstance(String ami, String type, String securityGroupId, String subnetId, String keyPairName)
 	{
-		def json = runCommand("aws ec2 run-instances --image-id $ami --instance-type $type --key-name $keyPairName --security-group-ids $securityGroupId --subnet-id $subnetId")
-		def id = json.Instances[0].InstanceId
-		return id
+		def json = runCommand("aws ec2 run-instances --image-id $ami --instance-type $type --key-name $keyPairName --security-group-ids $securityGroupId --subnet-id $subnetId --associate-public-ip-address")
+		def instanceData = json.Instances[0]
+		return instanceData
 	}
 	
 	def findSecurityGroupByName(String name) 

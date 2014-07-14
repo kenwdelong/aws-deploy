@@ -1,5 +1,3 @@
-- we'll have to add a "task list ready" listener and add all the dynamic tasks.  Probably we'll have to enforce 
-dependency order here (subnets before security groups, etc)
 - parameterize config file name
 - tag everything with env
 - delete env 

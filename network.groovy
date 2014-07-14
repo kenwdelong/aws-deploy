@@ -4,7 +4,8 @@ vpc.baseIp = "10.0."  // assumes /16
 securityGroups = [
 	[name: 'AppServer', description: 'Tomcat access: 443 from ELB, 8080 from Bastion', ingressRules : [ 
 			[port: 443, cidr: '0.0.0.0/0'], 
-			[port: 8080, subnet: 'Public']
+			[port: 8080, subnet: 'Public'],
+			[port: 22, cidr: '50.185.199.75/32']
 		]
 	],
 	[name: 'PublicLb', description: '443 from the world', ingressRules : [ 
@@ -19,7 +20,7 @@ instances = [
 
 environments {
 	prod {
-		// Subnets assum vpc.baseIp + cidr + ".0/24"
+		// Subnets assume vpc.baseIp + cidr + ".0/24"
 		subnets = [
 			[name: 'Public', cidrs: [1,2,3]],
 			[name: 'App', cidrs: [4,5,6]],
