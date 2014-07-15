@@ -1,12 +1,23 @@
 import groovy.json.*
 import groovy.transform.ToString
+import java.nio.files.*
 
 def env = project.hasProperty('env') ? project.getProperty('env') : 'dev'
 ext.env = env
+
+// NOT WORKING YET
+Properties p = new Properties()
+p.load(new FileReader(Paths.get('~/.aws/config')))
+p.each {
+	key, value ->
+	ext."$key" = value
+}
+
 logger.quiet "Loading configuration for environment [$env]."
 def configFile = file("network.groovy")
 def parsedConfig = new ConfigSlurper(env).parse(configFile.toURL())
 ext.config = parsedConfig
+
 ext.topology = new Topology(parsedConfig, env)
 
 task dummy {
@@ -51,12 +62,18 @@ topology.securityGroups.each {
 
 topology.instances.eachWithIndex {
 	instance, i ->
-	task "runInstance$i"(type: RunInstance, dependsOn: ['createAllSubnets', 'createAllSecurityGroups']) {
+	task "runInstance$i"(type: ChefBootstrap, dependsOn: ['createAllSubnets', 'createAllSecurityGroups']) {
 		ami = instance.ami
-		type = instance.type
-		securityGroup = instance.securityGroup
-		subnet = instance.subnet
+		flavor = instance.type
+		securityGroupId = instance.securityGroup
+		subnetId = instance.subnet
+		nodeName = "server$i"
 		keyPairName = instance.keyPairName
+		awsAccessKey = aws_access_key_id
+		awsSecretKey = aws_secret_access_key
+		region = project.region
+		runList = instance.runList
+		sshUserName = instance.sshUser
 	}
 }
 
@@ -73,12 +90,46 @@ task runAllInstances(dependsOn: (project.tasks.findAll { it.name.startsWith('run
 
 class ChefBootstrap extends KnifeTask
 {
+	@Input
+	String ami
+	
+	@Input
+	String flavor
+	
+	@Input 
+	String securityGroupId
+	
+	@Input 
+	String nodeName
+	
+	@Input 
+	String subnetId
+	
+	@Input 
+	String keyPairName
+	
+	@Input
+	String awsAccessKey
+	
+	@Input 
+	String awsSecretAccessKey
+	
+	@Input
+	String region
+	
+	@Input
+	String runList
+	
+	@Input
+	String sshUserName
+	
 	@TaskAction
 	void runTask()
 	{
-	'''
-	knife ec2 server create -I ami-b5a9d485 --flavor m3.medium --security-group-ids sg-a675c5c3 -N server01 --subnet subnet-3c23ec59 --ssh-key GradleKeyPair --aws-access-key-id XXX --aws-secret-access-key XXX --region us-west-2 --tags Env=Dev --run-list "recipe[cookbook::appserver]" -E dev -i ~/.aws/GradleKeyPair.pem --associate-public-ip --ssh-user ubuntu
-	'''
+		def tags = "Env=${project.env}"
+		def command = """knife ec2 server create -I $ami --flavor $flavor --security-group-ids $securityGroupId -N $serverName --subnet $subnetId --ssh-key $keyPairName --aws-access-key-id $awsAccessKey --aws-secret-access-key $awsSecretKey --region $region --tags $tags --run-list "$runList" -E ${project.env} -i ~/.aws/${keyPairName}.pem --associate-public-ip --ssh-user $sshUser"""
+		def result = runCommand(command, new File('~/chef/chef-repo'))
+		logger.quiet("Created instance $result")
 	}
 }
 
@@ -319,10 +370,16 @@ class AwsTask extends CommandLineTask
 
 class CommandLineTask extends DefaultTask 
 {
-	def runCommand(String command) {
+	def runCommand(String command)
+	{
+		return runCommand(command, new File('.'))
+	}
+
+	def runCommand(String command, File dir) 
+	{
 		StringBuilder errorCatcher = new StringBuilder()
 		StringBuilder stdOut = new StringBuilder()
-		def process = command.execute()
+		def process = command.execute([], dir)
 		process.consumeProcessOutput(stdOut, errorCatcher)
 		process.waitFor()
 		
@@ -403,7 +460,8 @@ class Topology
 			// Put a copy in each AZ
 			def targetSubnets = subnets.findAll { it.name.contains(instance.subnet)}.each {
 				targetSubnet ->
-				Instance i = new Instance(ami: instance.ami, keyPairName: instance.key, type: instance.type, subnet: targetSubnet, securityGroup: securityGroup)
+				Instance i = new Instance(ami: instance.ami, keyPairName: instance.key, type: instance.type, subnet: targetSubnet, securityGroup: securityGroup,
+								runList: instance.runList, sshUser: instance.sshUser)
 				instances << i
 			}
 		}
@@ -473,5 +531,7 @@ class Instance
 	SecurityGroup securityGroup
 	String type
 	Subnet subnet
+	String runList
+	String sshUser
 }
 

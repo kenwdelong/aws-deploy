@@ -15,7 +15,7 @@ securityGroups = [
 ]
 
 instances = [
-	[ami: 'ami-b5a9d485', key: 'GradleKeyPair', securityGroup: 'AppServer', type: "m3.medium", subnet: 'App']
+	[ami: 'ami-b5a9d485', key: 'GradleKeyPair', securityGroup: 'AppServer', type: "m3.medium", subnet: 'App', runList: '[redhen::appserver]', sshUser: 'ubuntu']
 ]
 
 environments {
