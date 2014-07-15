@@ -77,7 +77,7 @@ class ChefBootstrap extends KnifeTask
 	void runTask()
 	{
 	'''
-	knife ec2 server create -I ami-b5a9d485 --flavor m3.medium --security-group-ids sg-a675c5c3 -N server01 --subnet subnet-3c23ec59 --ssh-key GradleKeyPair --aws-access-key-id XXX --aws-secret-access-key XXX --region us-west-2 --tags Env=Dev --run-list "recipe[redhen::appserver]" -E dev -i ~/.aws/GradleKeyPair.pem --associate-public-ip --ssh-user ubuntu
+	knife ec2 server create -I ami-b5a9d485 --flavor m3.medium --security-group-ids sg-a675c5c3 -N server01 --subnet subnet-3c23ec59 --ssh-key GradleKeyPair --aws-access-key-id XXX --aws-secret-access-key XXX --region us-west-2 --tags Env=Dev --run-list "recipe[cookbook::appserver]" -E dev -i ~/.aws/GradleKeyPair.pem --associate-public-ip --ssh-user ubuntu
 	'''
 	}
 }
