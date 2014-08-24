@@ -16,9 +16,10 @@ logger.quiet "Loaded AWS config from $awsConfigFile"
 
 
 logger.quiet "Loading configuration for environment [$env]."
-def configFile = file("network.groovy")
+def configFile = file(project.hasProperty('configFile') ? project.getProperty('configFile') : 'network.groovy')
 def parsedConfig = new ConfigSlurper(env).parse(configFile.toURL())
 ext.config = parsedConfig
+logger.quiet "Parsed config file $configFile"
 
 ext.topology = new Topology(parsedConfig, env)
 

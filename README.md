@@ -27,7 +27,6 @@ This project, as it stands now, requires
 The config file is read in with the ConfigSlurper, and fed into a Topology object to be parsed and have the actual IPs set, etc.  The Topology object is held as a Gradle Project ext property, and fed into the tasks that need it.  The Gradle tasks are custom tasks that form an inheritance hierarchy.  Currently, all the Gradle code is in the build.gradle file.
 
 ## TTD
-* parameterize properly
 * make room for instances that are not replicated across availability zones, like bastion servers, CI servers, etc.
 * get RDS automation working
 * automatically add the RDS credentials to the Chef databag
