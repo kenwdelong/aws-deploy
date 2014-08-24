@@ -11,6 +11,10 @@ config file.  Chef is used (using knife ec2) to create the actual instances, app
 Currently (July 2014) this is very much under construction (only a few days old) and there's a lot of hard-coded stuff
 that still needs to be fixed.
 
+## Command Line Parameters
+* -Penv the environment. Default 'dev'.  This will activate the correct environment in the environments block in your config file.
+* -PconfigFile the config file to use.  Default 'network.groovy', in the current directory.  This file specifies the subnets, security groups, instances, etc.
+
 ## Dependencies
 This project, as it stands now, requires
 * aws cli
