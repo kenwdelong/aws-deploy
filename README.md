@@ -6,10 +6,17 @@ Use a Gradle DSL to create AWS subnets, security groups, and instances.
 In the spirit of "infrastructure as code", this project allows one to create clones of the production environment
 in AWS, perhaps to be used as
 staging, test, etc.  The construction of the subnets and security groups is scripted with Gradle starting from a
-config file.  Chef is used (using knife ec2) to create the actual instances, apply the proper recipes, etc.
+config file.  Chef is used (using knife ec2) to create the actual instances, apply the proper recipes, etc.  The
+knife ec2 plugin is used, so that when the ec2 instance is created, it is registered with Chef Enterprise and the 
+node is bootstrapped and chef-client is run.  So when the node is up, it should be fully provisioned.
 
-Currently (July 2014) this is very much under construction (only a few days old) and there's a lot of hard-coded stuff
-that still needs to be fixed.
+Currently (Aug 2014) this is very much under construction (only a few days old) and there's a lot of hard-coded stuff
+that still needs to be fixed.  
+
+### Bugs
+The knife command that creates the ec2 servers, registers them with your Chef server, and 
+uploads and runs chef-client is not working at the moment. The command is working from the command line, but not when I run
+it from within Gradle.
 
 ## Command Line Parameters
 * -Penv the environment. Default 'dev'.  This will activate the correct environment in the environments block in your config file.

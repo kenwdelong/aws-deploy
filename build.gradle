@@ -68,8 +68,7 @@ topology.instances.eachWithIndex {
 	task "runInstance$i"(type: ChefBootstrap, dependsOn: ['createAllSubnets', 'createAllSecurityGroups']) {
 		ami = instance.ami
 		flavor = instance.type
-		securityGroupId = instance.securityGroup
-		subnetId = instance.subnet
+		theInstance = instance
 		nodeName = "server$i"
 		keyPairName = instance.keyPairName
 		awsAccessKey = aws_access_key_id
@@ -100,13 +99,10 @@ class ChefBootstrap extends KnifeTask
 	String flavor
 	
 	@Input 
-	String securityGroupId
-	
+	Instance theInstance
+		
 	@Input 
 	String nodeName
-	
-	@Input 
-	String subnetId
 	
 	@Input 
 	String keyPairName
@@ -129,9 +125,13 @@ class ChefBootstrap extends KnifeTask
 	@TaskAction
 	void runTask()
 	{
+		def subnetId = theInstance.subnet.id
+		def securityGroupId = theInstance.securityGroup.id
 		def tags = "Env=${project.env}"
-		def command = """knife ec2 server create -I $ami --flavor $flavor --security-group-ids $securityGroupId -N $serverName --subnet $subnetId --ssh-key $keyPairName --aws-access-key-id $awsAccessKey --aws-secret-access-key $awsSecretKey --region $region --tags $tags --run-list "$runList" -E ${project.env} -i ~/.aws/${keyPairName}.pem --associate-public-ip --ssh-user $sshUser"""
-		def result = runCommand(command, new File('~/chef/chef-repo'))
+		def extension = System.properties['os.name'].contains('indows') ? '.bat' : ''
+		def command = """knife$extension ec2 server create -I $ami --flavor $flavor --security-group-ids $securityGroupId -N $nodeName --subnet $subnetId --ssh-key $keyPairName --aws-access-key-id $awsAccessKey --aws-secret-access-key $awsSecretKey --region $region --tags $tags --run-list "$runList" -E ${project.env} -i ~/.aws/${keyPairName}.pem --associate-public-ip --ssh-user $sshUserName"""
+		logger.quiet "Running $command"
+		def result = runCommand(command, new File("${System.properties['user.home']}/chef/chef-repo"))
 		logger.quiet("Created instance $result")
 	}
 }
@@ -162,7 +162,9 @@ class RunInstance extends AwsTask
 	void runTask()
 	{
 		def result = runInstance(ami, type, securityGroup.id, subnet.id, keyPairName)
-		println "Created instance $result.InstanceId"
+		def id = result.InstanceId
+		println "Created instance $id"
+		addTags(id, [Env: project.env])
 	}
 }
 
@@ -259,6 +261,7 @@ class CreateSecurityGroup extends AwsTask {
 		def groupId = createSecurityGroup(groupName, description, vpcId)
 		topology.addIdToSecurityGroup(groupName, groupId)
 		logger.quiet "Added security group $groupName with id $groupId" 
+		addTags(groupId, [Env: project.env])
 	}
 }
 
@@ -382,11 +385,14 @@ class CommandLineTask extends DefaultTask
 	{
 		StringBuilder errorCatcher = new StringBuilder()
 		StringBuilder stdOut = new StringBuilder()
-		def process = command.execute([], dir)
+		def process = command.execute(null, dir)
 		process.consumeProcessOutput(stdOut, errorCatcher)
 		process.waitFor()
 		
-		if(process.exitValue() != 0) {
+		if(process.exitValue() != 0) 
+		{
+			logger.error "Failed to run command [$command] from directory [$dir]"
+			logger.error stdOut.toString()
 			throw new GradleException(errorCatcher.toString())
 		}
 			
@@ -474,10 +480,10 @@ class Topology
 
 	def findSubnetByName(String subnetName)
 	{
-		println "Looking for $subnetName"
-		println "in a list of"
-		subnets.each { println it }
-		println "\n"
+//		println "Looking for $subnetName"
+//		println "in a list of"
+//		subnets.each { println it }
+//		println "\n"
 		subnets.find { it.name == subnetName }
 	}
 	
