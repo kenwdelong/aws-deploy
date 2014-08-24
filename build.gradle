@@ -1,17 +1,19 @@
 import groovy.json.*
 import groovy.transform.ToString
-import java.nio.files.*
+import java.nio.file.*
 
 def env = project.hasProperty('env') ? project.getProperty('env') : 'dev'
 ext.env = env
 
-// NOT WORKING YET
 Properties p = new Properties()
-p.load(new FileReader(Paths.get('~/.aws/config')))
+String awsConfigFile = "${System.properties['user.home']}/.aws/config"
+p.load(new FileReader(Paths.get(awsConfigFile).toFile()))
 p.each {
 	key, value ->
 	ext."$key" = value
 }
+logger.quiet "Loaded AWS config from $awsConfigFile"
+
 
 logger.quiet "Loading configuration for environment [$env]."
 def configFile = file("network.groovy")
@@ -112,7 +114,7 @@ class ChefBootstrap extends KnifeTask
 	String awsAccessKey
 	
 	@Input 
-	String awsSecretAccessKey
+	String awsSecretKey
 	
 	@Input
 	String region
@@ -426,7 +428,7 @@ class Topology
 				subnets << s
 			}
 		}
-		subnets.each { println it }
+		//subnets.each { println it }
 		
 		config.securityGroups.each {
 			sg ->
@@ -465,7 +467,7 @@ class Topology
 				instances << i
 			}
 		}
-		instances.each { println it }
+		//instances.each { println it }
 		
 	} 	
 
