@@ -13,6 +13,10 @@ node is bootstrapped and chef-client is run.  So when the node is up, it should 
 Currently (Aug 2014) this is very much under construction (only a few days old) and there's a lot of hard-coded stuff
 that still needs to be fixed.  
 
+# Deprecated
+When I started this, I didn't know about Cloudformation templates or Ansible's AWS modules. This was just an attempt to do something just like
+that. I think if/when I have to do this for real, I'll use Ansible's templates.
+
 ### Bugs
 The knife command that creates the ec2 servers, registers them with your Chef server, and 
 uploads and runs chef-client is not working at the moment. The command is working from the command line, but not when I run
